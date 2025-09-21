@@ -31,7 +31,7 @@ function VirichSurface(uSteps, vSteps, a = 1.5) {
         }
     }
 
-    // Створюємо дві моделі
+    // Створення модель
     let modelU = new Model("U-lines");
     modelU.BufferData(verticesU);
 
