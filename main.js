@@ -110,8 +110,7 @@ function initGL() {
     shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
     shProgram.iColor                     = gl.getUniformLocation(prog, "color");
 
-    surface = new Model('Surface');
-    surface.BufferData(CreateSurfaceData());
+    surface = new VirichSurface(40, 40, 1.5); // 40x40 сітка
 
     gl.enable(gl.DEPTH_TEST);
 }
