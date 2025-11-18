@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>PA2 – Virich Surface</title>
+    <style>
+        body { background: #eee; font-family: Arial; }
+        #controls { margin: 10px 0; }
+    </style>
+
+    <script src="./Utils/trackball-rotator.js"></script>
+    <script src="./Utils/m4.js"></script>
+    <script src="./shader.gpu"></script>
+    <script src="./surface.js"></script>
+    <script src="./main.js"></script>
+</head>
+
+<body onload="init()">
+
+<h3>PA2 – Virich Cyclic Surface (Triangles + Gouraud Shading)</h3>
+
+<div id="controls">
+    U steps: <input type="range" min="5" max="100" value="30" id="uSlider">
+    <span id="uVal">30</span>
+
+    <br><br>
+
+    V steps: <input type="range" min="5" max="100" value="30" id="vSlider">
+    <span id="vVal">30</span>
+</div>
+
+<canvas id="webglcanvas" width="700" height="700"></canvas>
+
+</body>
+</html>
