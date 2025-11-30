@@ -1,36 +1,89 @@
-
-
-// Vertex shader
-const vertexShaderSource = `
+// ================== VERTEX SHADER =====================
+var vertexShaderSource = `
 attribute vec3 vertex;
-attribute vec2 tex;
+attribute vec3 normal;
+attribute vec3 tangent;
+attribute vec2 texCoord;
+
 uniform mat4 ModelViewProjectionMatrix;
 uniform mat4 ModelViewMatrix;
+uniform vec3 lightPos;
 
 varying vec2 vTexCoord;
+varying vec3 vPosView;
+varying vec3 vNormalView;
+varying vec3 vTangentView;
+varying vec3 vLightPosView;
 
 void main() {
-    
-    vTexCoord = tex;
 
-    gl_Position = ModelViewProjectionMatrix * vec4(vertex,1.0);
-}`;
+    vec4 posView4 = ModelViewMatrix * vec4(vertex, 1.0);
+    vPosView = posView4.xyz;
 
+    vNormalView  = normalize( (ModelViewMatrix * vec4(normal,  0.0)).xyz );
+    vTangentView = normalize( (ModelViewMatrix * vec4(tangent, 0.0)).xyz );
 
-// Fragment shader
-const fragmentShaderSource = `
-#ifdef GL_FRAGMENT_PRECISION_HIGH
-   precision highp float;
-#else
-   precision mediump float;
-#endif
+    vLightPosView = (ModelViewMatrix * vec4(lightPos, 1.0)).xyz;
 
-uniform vec4 color;
-uniform sampler2D iTMU0;
-uniform sampler2D iTMU1;
+    vTexCoord = texCoord;
+
+    gl_Position = ModelViewProjectionMatrix * vec4(vertex, 1.0);
+}
+`;
+
+// ================== FRAGMENT SHADER =====================
+var fragmentShaderSource = `
+precision mediump float;
 
 varying vec2 vTexCoord;
+varying vec3 vPosView;
+varying vec3 vNormalView;
+varying vec3 vTangentView;
+varying vec3 vLightPosView;
+
+uniform sampler2D uDiffuseSampler;
+uniform sampler2D uSpecularSampler;
+uniform sampler2D uNormalSampler;
 
 void main() {
-    gl_FragColor = /*color + */ texture2D(iTMU0, vTexCoord)*0.5 + texture2D(iTMU1, vTexCoord)*0.5;
-}`;
+
+    // --- 1) Gram-Schmidt (PRIORITIZE NORMAL) ---
+    vec3 N = normalize(vNormalView);
+    vec3 T = normalize(vTangentView);
+    T = normalize(T - dot(T, N) * N);   // tangent ортогональний до normal
+    vec3 B = normalize(cross(N, T));
+
+    // --- 2) normal map in tangent space ---
+    vec3 normalTex = texture2D(uNormalSampler, vTexCoord).rgb;
+    normalTex = normalTex * 2.0 - 1.0; // [0,1] -> [-1,1]
+    vec3 N_tangent = normalize(normalTex);
+
+    mat3 TBN = mat3(T, B, N);
+    vec3 N_view = normalize(TBN * N_tangent);
+
+    // --- 3) vectors for lighting ---
+    vec3 L = normalize(vLightPosView - vPosView);
+    vec3 V = normalize(-vPosView);
+    vec3 R = reflect(-L, N_view);
+
+    // --- 4) textures ---
+    vec3 diffuseTex  = texture2D(uDiffuseSampler,  vTexCoord).rgb;
+    vec3 specularTex = texture2D(uSpecularSampler, vTexCoord).rgb;
+
+    // --- 5) Ambient + Diffuse + Specular ---
+    float ambientStrength = 0.2;
+    vec3 ambient = ambientStrength * diffuseTex;
+
+    float diff = max(dot(N_view, L), 0.0);
+    vec3 diffuse = diff * diffuseTex;
+
+    float spec = 0.0;
+    if (diff > 0.0) {
+        spec = pow(max(dot(R, V), 0.0), 16.0);
+    }
+    vec3 specular = spec * specularTex;
+
+    vec3 color = ambient + diffuse + specular;
+    gl_FragColor = vec4(color, 1.0);
+}
+`;
