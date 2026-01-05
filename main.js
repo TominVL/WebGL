@@ -1,181 +1,246 @@
-'use strict';
+"use strict";
 
-let gl;                         // The webgl context.
-let surface;                    // A surface model
-let shProgram;                  // A shader program
-let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
+let gl;
+let program;
+let spaceball;
+let surface;
 
-function deg2rad(angle) {
-    return angle * Math.PI / 180;
-}
+// Буфери для атрибутів
+let normalBuffer, tangentBuffer, texCoordBuffer;
 
+// Елементи інтерфейсу
+let uSlider, vSlider, uValSpan, vValSpan;
 
-// Constructor
-function Model(name) {
-    this.name = name;
-    this.iVertexBuffer = gl.createBuffer();
-    this.count = 0;
+// Текстури
+let diffuseTex, specularTex, normalTex;
 
-    this.BufferData = function(vertices) {
+// Стан трансформації текстури
+let texPivotU = 0.5;
+let texPivotV = 0.5;
+let texScale = 1.0;
+let texAngle = 0.0;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.iVertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STREAM_DRAW);
+/* --------------------------- ФУНКЦІЯ МАЛЮВАННЯ ------------------------------ */
+function draw() {
+    if (!gl || !surface) return;
 
-        this.count = vertices.length/3;
-    }
-
-    this.Draw = function() {
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.iVertexBuffer);
-        gl.vertexAttribPointer(shProgram.iAttribVertex, 3, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(shProgram.iAttribVertex);
-   
-        gl.drawArrays(gl.LINE_STRIP, 0, this.count);
-    }
-}
-
-
-// Constructor
-function ShaderProgram(name, program) {
-
-    this.name = name;
-    this.prog = program;
-
-    // Location of the attribute variable in the shader program.
-    this.iAttribVertex = -1;
-    // Location of the uniform specifying a color for the primitive.
-    this.iColor = -1;
-    // Location of the uniform matrix representing the combined transformation.
-    this.iModelViewProjectionMatrix = -1;
-
-    this.Use = function() {
-        gl.useProgram(this.prog);
-    }
-}
-
-
-/* Draws a colored cube, along with a set of coordinate axes.
- * (Note that the use of the above drawPrimitive function is not an efficient
- * way to draw with WebGL.  Here, the geometry is so simple that it doesn't matter.)
- */
-function draw() { 
-    gl.clearColor(0,0,0,1);
+    gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    
-    /* Set the values of the projection transformation */
-    let projection = m4.perspective(Math.PI/8, 1, 8, 12); 
-    
-    /* Get the view matrix from the SimpleRotator object.*/
+    gl.enable(gl.DEPTH_TEST);
+
+    // Матриці проекції та вигляду
+    let projection = m4.perspective(Math.PI / 8, gl.canvas.width / gl.canvas.height, 8, 12);
     let modelView = spaceball.getViewMatrix();
+    let rotateToPointZero = m4.axisRotation([0.707, 0.707, 0], 0.7);
+    let translateToPointZero = m4.translation(0, 0, -10);
 
-    let rotateToPointZero = m4.axisRotation([0.707,0.707,0], 0.7);
-    let translateToPointZero = m4.translation(0,0,-10);
+    let matAccum0 = m4.multiply(rotateToPointZero, modelView);
+    let matAccum1 = m4.multiply(translateToPointZero, matAccum0);
+    let MVP = m4.multiply(projection, matAccum1);
 
-    let matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    let matAccum1 = m4.multiply(translateToPointZero, matAccum0 );
-        
-    /* Multiply the projection matrix times the modelview matrix to give the
-       combined transformation matrix, and send that to the shader program. */
-    let modelViewProjection = m4.multiply(projection, matAccum1 );
+    gl.uniformMatrix4fv(program.uModelView, false, matAccum1);
+    gl.uniformMatrix4fv(program.uMVP, false, MVP);
 
-    gl.uniformMatrix4fv(shProgram.iModelViewProjectionMatrix, false, modelViewProjection );
-    
-    /* Draw the six faces of a cube, with different colors. */
-    gl.uniform4fv(shProgram.iColor, [1,1,0,1] );
+    // Обертання світла
+    let t = performance.now() * 0.001;
+    let lightPos = [4 * Math.cos(t), 4 * Math.sin(t), 2];
+    gl.uniform3fv(program.uLightPos, lightPos);
+
+    // ПЕРЕДАЧА ПАРАМЕТРІВ ТРАНСФОРМАЦІЇ ТЕКСТУРИ
+    gl.uniform2f(program.uPivot, texPivotU, texPivotV);
+    gl.uniform1f(program.uScale, texScale);
+    gl.uniform1f(program.uAngle, texAngle);
+
+    // Прив'язка текстур
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, diffuseTex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, specularTex);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, normalTex);
+
+    // Прив'язка буферів атрибутів
+    bindAttribute(normalBuffer, program.aNormal, 3);
+    bindAttribute(tangentBuffer, program.aTangent, 3);
+    bindAttribute(texCoordBuffer, program.aTexCoord, 2);
 
     surface.Draw();
+    updateUI();
 }
 
-function CreateSurfaceData()
-{
-    let vertexList = [];
-
-    for (let i=0; i<360; i+=5) {
-        vertexList.push( Math.sin(deg2rad(i)), 1, Math.cos(deg2rad(i)) );
-        vertexList.push( Math.sin(deg2rad(i)), 0, Math.cos(deg2rad(i)) );
-    }
-
-    return vertexList;
+function bindAttribute(buffer, location, size) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(location);
 }
 
+/* --------------------------- ОНОВЛЕННЯ ПОВЕРХНІ ------------------------------ */
+function rebuildSurface() {
+    if (!uSlider || !vSlider) return;
 
-/* Initialize the WebGL context. Called from init() */
-function initGL() {
-    let prog = createProgram( gl, vertexShaderSource, fragmentShaderSource );
+    let uRaw = parseInt(uSlider.value);
+    let vRaw = parseInt(vSlider.value);
 
-    shProgram = new ShaderProgram('Basic', prog);
-    shProgram.Use();
+    // Нелінійна залежність кроків
+    let U = Math.round(10 + (uRaw * uRaw) / 100);
+    let V = Math.round(10 + (vRaw * vRaw) / 100);
 
-    shProgram.iAttribVertex              = gl.getAttribLocation(prog, "vertex");
-    shProgram.iModelViewProjectionMatrix = gl.getUniformLocation(prog, "ModelViewProjectionMatrix");
-    shProgram.iColor                     = gl.getUniformLocation(prog, "color");
+    uValSpan.textContent = U;
+    vValSpan.textContent = V;
 
-    surface = new Model('Surface');
-    surface.BufferData(CreateSurfaceData());
+    let data = {};
+    CreateVirichSurfaceData(U, V, data);
 
-    gl.enable(gl.DEPTH_TEST);
-}
-
-
-/* Creates a program for use in the WebGL context gl, and returns the
- * identifier for that program.  If an error occurs while compiling or
- * linking the program, an exception of type Error is thrown.  The error
- * string contains the compilation or linking error.  If no error occurs,
- * the program identifier is the return value of the function.
- * The second and third parameters are strings that contain the
- * source code for the vertex shader and for the fragment shader.
- */
-function createProgram(gl, vShader, fShader) {
-    let vsh = gl.createShader( gl.VERTEX_SHADER );
-    gl.shaderSource(vsh,vShader);
-    gl.compileShader(vsh);
-    if ( ! gl.getShaderParameter(vsh, gl.COMPILE_STATUS) ) {
-        throw new Error("Error in vertex shader:  " + gl.getShaderInfoLog(vsh));
-     }
-    let fsh = gl.createShader( gl.FRAGMENT_SHADER );
-    gl.shaderSource(fsh, fShader);
-    gl.compileShader(fsh);
-    if ( ! gl.getShaderParameter(fsh, gl.COMPILE_STATUS) ) {
-       throw new Error("Error in fragment shader:  " + gl.getShaderInfoLog(fsh));
-    }
-    let prog = gl.createProgram();
-    gl.attachShader(prog,vsh);
-    gl.attachShader(prog, fsh);
-    gl.linkProgram(prog);
-    if ( ! gl.getProgramParameter( prog, gl.LINK_STATUS) ) {
-       throw new Error("Link error in program:  " + gl.getProgramInfoLog(prog));
-    }
-    return prog;
-}
-
-
-/**
- * initialization function that will be called when the page has loaded
- */
-function init() {
-    let canvas;
-    try {
-        canvas = document.getElementById("webglcanvas");
-        gl = canvas.getContext("webgl");
-        if ( ! gl ) {
-            throw "Browser does not support WebGL";
-        }
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not get a WebGL graphics context.</p>";
-        return;
-    }
-    try {
-        initGL();  // initialize the WebGL graphics context
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
-        return;
+    if (!surface) {
+        surface = new Model("VirichSurface");
     }
 
-    spaceball = new TrackballRotator(canvas, draw, 0);
+    surface.BufferData(data.verticesF32, data.indicesU16);
+
+    // Перестворюємо/оновлюємо буфери
+    if (!normalBuffer) normalBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data.normalsF32, gl.STATIC_DRAW);
+
+    if (!tangentBuffer) tangentBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, tangentBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data.tangentsF32, gl.STATIC_DRAW);
+
+    if (!texCoordBuffer) texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data.texcoordsF32, gl.STATIC_DRAW);
 
     draw();
 }
+
+/* --------------------------- UI ТА КЛАВІАТУРА ------------------------------ */
+function updateUI() {
+    const uEl = document.getElementById('val-u');
+    if (uEl) {
+        uEl.textContent = texPivotU.toFixed(2);
+        document.getElementById('val-v').textContent = texPivotV.toFixed(2);
+        document.getElementById('val-scale').textContent = texScale.toFixed(2);
+        document.getElementById('val-angle').textContent = Math.round(texAngle * 180 / Math.PI);
+    }
+}
+
+function handleKeyDown(e) {
+    const step = 0.02;
+    // Перевірка на мову (якщо натиснуто клавішу в укр. розкладці, switch не спрацює)
+    switch(e.key.toLowerCase()) {
+        case 'w': case 'ц': texPivotV += step; break;
+        case 's': case 'і': texPivotV -= step; break;
+        case 'a': case 'ф': texPivotU -= step; break;
+        case 'd': case 'в': texPivotU += step; break;
+        case 'q': case 'й': texScale = Math.max(0.1, texScale - step); break;
+        case 'e': case 'у': texScale += step; break;
+        case 'z': case 'я': texAngle -= step * 3; break;
+        case 'x': case 'ч': texAngle += step * 3; break;
+        case 'r': case 'к':
+            texPivotU = 0.5; texPivotV = 0.5;
+            texScale = 1.0; texAngle = 0.0;
+            break;
+    }
+    draw();
+}
+
+/* --------------------------- ІНІЦІАЛІЗАЦІЯ ------------------------------ */
+function init() {
+    const canvas = document.getElementById("webglcanvas");
+    gl = canvas.getContext("webgl");
+    if (!gl) { alert("WebGL не підтримується"); return; }
+
+    program = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+    gl.useProgram(program);
+
+    // Отримання локацій атрибутів та uniform-змінних
+    program.aVertex   = gl.getAttribLocation(program, "vertex");
+    program.aNormal   = gl.getAttribLocation(program, "normal");
+    program.aTangent  = gl.getAttribLocation(program, "tangent");
+    program.aTexCoord = gl.getAttribLocation(program, "texCoord");
+
+    program.uMVP       = gl.getUniformLocation(program, "ModelViewProjectionMatrix");
+    program.uModelView = gl.getUniformLocation(program, "ModelViewMatrix");
+    program.uLightPos  = gl.getUniformLocation(program, "lightPos");
+    program.uPivot     = gl.getUniformLocation(program, "uPivot");
+    program.uScale     = gl.getUniformLocation(program, "uScale");
+    program.uAngle     = gl.getUniformLocation(program, "uAngle");
+
+    program.uDiffuseSampler  = gl.getUniformLocation(program, "uDiffuseSampler");
+    program.uSpecularSampler = gl.getUniformLocation(program, "uSpecularSampler");
+    program.uNormalSampler   = gl.getUniformLocation(program, "uNormalSampler");
+
+    gl.uniform1i(program.uDiffuseSampler, 0);
+    gl.uniform1i(program.uSpecularSampler, 1);
+    gl.uniform1i(program.uNormalSampler, 2);
+
+    spaceball = new TrackballRotator(canvas, draw, 0);
+
+    // Слайдери кроків поверхні
+    uSlider = document.getElementById("uSlider");
+    vSlider = document.getElementById("vSlider");
+    uValSpan = document.getElementById("uVal");
+    vValSpan = document.getElementById("vVal");
+
+    uSlider.oninput = rebuildSurface;
+    vSlider.oninput = rebuildSurface;
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Завантаження текстур (використовуйте свої шляхи)
+    diffuseTex  = loadTexture("img/brick_diffuse.png");
+    specularTex = loadTexture("img/brick_rough.png");
+    normalTex   = loadTexture("img/brick_normal.png");
+
+    rebuildSurface();
+
+    function animate() {
+        draw();
+        requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+}
+
+/* --------------------------- ДОПОМІЖНІ ФУНКЦІЇ ------------------------------ */
+function loadTexture(url) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]));
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = function() {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        draw();
+    };
+    img.src = url;
+    return tex;
+}
+
+function createProgram(gl, vsSource, fsSource) {
+    function compileShader(type, source) {
+        let shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error("Помилка шейдера:", gl.getShaderInfoLog(shader));
+            return null;
+        }
+        return shader;
+    }
+    const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+    const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+    let prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    return prog;
+}
+
+window.onload = init;
